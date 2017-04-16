@@ -1,3 +1,4 @@
+# haskell defaults from github
 dist
 dist-*
 cabal-dev
@@ -17,3 +18,6 @@ cabal.sandbox.config
 *.eventlog
 .stack-work/
 cabal.project.local
+
+# emacs tmp files
+*~
