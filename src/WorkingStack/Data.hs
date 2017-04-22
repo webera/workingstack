@@ -4,12 +4,12 @@ module WorkingStack.Data where
 
 import Data.Aeson
 import GHC.Generics
-import qualified Data.Text as DataText
+import qualified Data.Text as Text
 import qualified Data.ByteString.Lazy as ByteString
 
 data Entry = Entry {
-  description :: DataText.Text,
-  notes :: DataText.Text } deriving (Generic, Show)
+  description :: Text.Text,
+  notes :: Text.Text } deriving (Generic, Show)
 
 data WorkingStack = WorkingStack [Entry] deriving (Generic, Show)
 
@@ -38,8 +38,8 @@ instance FromJSON WorkingStack
 loadWorkingStackFromFile file = do
   bs <- ByteString.readFile file
   case decode bs :: Maybe WorkingStack of
-    Just ws -> return ws
-    Nothing -> return (WorkingStack [])
+    Just (WorkingStack xs) -> return xs
+    Nothing -> return ([])
 
 --------------------------------------------------------------------------------
 
@@ -47,17 +47,3 @@ saveWorkingStackToFile ws file = do
   ByteString.writeFile file (encode ws)
 
 --------------------------------------------------------------------------------
-
-{-
-class IsGValue Entry where
-
-  toGValue :: a -> IO GValue
-  toGValue entry = do
-    return ()
-
-  fromGValue :: GValue -> IO a
-  fromGValue = do
-    
-    return ()
--}
-

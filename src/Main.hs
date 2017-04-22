@@ -5,9 +5,15 @@ module Main where
 import Data.Maybe (fromJust)
 import System.Environment
 
+import Foreign.Ptr
+import Foreign.StablePtr
+
+import Data.Aeson
+
 import Data.GI.Base
 import Data.GI.Base.GValue
-import qualified Data.Text as DataText
+import qualified Data.ByteString.Lazy.Char8 as BSL
+import qualified Data.Text as Text
 import qualified GI.Gtk as Gtk
 
 import WorkingStack.Data
@@ -15,40 +21,168 @@ import WorkingStack.Data
 --------------------------------------------------------------------------------
 
 dataFunc layout renderer model iter = do
-  Just value <- Gtk.treeModelGetValue model iter 0 >>= fromGValue
-  
   tr <- unsafeCastTo Gtk.CellRendererText renderer
-  Gtk.setCellRendererTextText tr value
+
+  value <- Gtk.treeModelGetValue model iter 0 >>= fromGValue
+  entry <- deRefStablePtr $ castPtrToStablePtr value
+  Gtk.setCellRendererTextText tr $ description entry
+
+--------------------------------------------------------------------------------
+
+addEntryToModel entry model = do
+  iter <- Gtk.listStoreAppend model
+  newEntryToGValue entry >>= Gtk.listStoreSetValue model iter 0
+  
+--------------------------------------------------------------------------------
+
+newEntryToGValue entry = do
+  sPtr <- newStablePtr entry
+  gv <- toGValue $ castStablePtrToPtr sPtr
+  return (gv)
 
 --------------------------------------------------------------------------------
 
 addEntry model = do
-  gv <- newGValue gtypeString
-  set_string gv (Just $ DataText.pack "Test")
+  addEntryToModel (Entry (Text.pack "New") (Text.pack "Notes")) model
+  
+--------------------------------------------------------------------------------
 
-  iter <- Gtk.listStoreAppend model
-  Gtk.setTreeIterUserData iter (Entry "a" "b")
-  Gtk.listStoreSetValue model iter 0 gv
+onListEntryEdited model path newText = do
+  (av, iter) <- Gtk.treeModelGetIterFromString model path
+  case av of
+    True -> do
+      ptr <- Gtk.treeModelGetValue model iter 0 >>= fromGValue
+      entry <- deRefStablePtr $ castPtrToStablePtr ptr
+
+      sPtr <- newStablePtr (Entry newText (notes entry))
+      gv <- toGValue $ castStablePtrToPtr sPtr
+      Gtk.listStoreSetValue model iter 0 gv
+
+      freeStablePtr $ castPtrToStablePtr ptr
+    False -> return ()
+      
+--------------------------------------------------------------------------------
+
+notesLostFocus notesView treeView keyEvent  = do
+  tvs <- Gtk.treeViewGetSelection treeView
+  (valid, model, iter) <- Gtk.treeSelectionGetSelected tvs
+  case valid of
+    True -> do
+      ptr <- Gtk.treeModelGetValue model iter 0 >>= fromGValue
+      entry <- deRefStablePtr $ castPtrToStablePtr ptr
+
+      textBuffer <- Gtk.textViewGetBuffer notesView
+      (startIter, endIter) <- Gtk.textBufferGetBounds textBuffer
+      notesText <- Gtk.textBufferGetText textBuffer startIter endIter False
+      
+      sPtr <- newStablePtr (Entry (description entry) notesText)
+      gv <- toGValue $ castStablePtrToPtr sPtr
+      listModel <- unsafeCastTo Gtk.ListStore model
+      Gtk.listStoreSetValue listModel iter 0 gv
+
+      freeStablePtr $ castPtrToStablePtr ptr
+      return (False)
+    False -> return (False)
+
+--------------------------------------------------------------------------------
+
+removeEntry treeView = do
+  tvs <- Gtk.treeViewGetSelection treeView
+  (valid, model, iter) <- Gtk.treeSelectionGetSelected tvs
+  case valid of
+    True -> do
+      ptr <- Gtk.treeModelGetValue model iter 0 >>= fromGValue
+      freeStablePtr $ castPtrToStablePtr ptr
+
+      listModel <- unsafeCastTo Gtk.ListStore model
+      Gtk.listStoreRemove listModel iter
+      return ()
+    False -> do
+      return ()
+
+--------------------------------------------------------------------------------
+
+listSelectionChanged notesView treeView = do
+  tvs <- Gtk.treeViewGetSelection treeView
+  (valid, model, iter) <- Gtk.treeSelectionGetSelected tvs
+  case valid of
+    True -> do
+      ptr <- Gtk.treeModelGetValue model iter 0 >>= fromGValue
+      entry <- deRefStablePtr $ castPtrToStablePtr ptr
+
+      textBuffer <- Gtk.textViewGetBuffer notesView
+      Gtk.textBufferSetText textBuffer (notes entry) (-1)
+      return ()
+    False -> return ()
+
+--------------------------------------------------------------------------------
+
+{-
+save treeView file = do
+  model <- Gtk.treeViewGetModel treeView >>= fromJust
+
+  (valid, sIter) <- Gtk.treeModelIterFirst model
+  case valid of
+    True -> do
+      return ()
+    False -> do
+      saveWorkingStackToFile (WorkingStack []) "data.json"
+      return ()
+
+  where collect xs model = do
+          treeModelIterNext model
+-}          
+
+{-
+  where foreachFunc tm _ it = do
+          ptr <- Gtk.treeModelGetValue model iter 0 >>= fromGValue
+          entry <- deRefStablePtr $ castPtrToStablePtr ptr
+          return (False)
+-}
 
 --------------------------------------------------------------------------------
 
 main :: IO ()
 main = do
   argv <- getArgs
-  Gtk.init $ Just (map DataText.pack argv)
+  Gtk.init $ Just (map Text.pack argv)
 
   builder <- Gtk.builderNewFromFile "gui.glade"
 
+  -- load data and setup model
+  entries <- loadWorkingStackFromFile "data.json"
+
+  model <- #getObject builder "listStore" >>= unsafeCastTo Gtk.ListStore . fromJust
+  sequence_ [ addEntryToModel entry model | entry <- entries ] 
+
   -- Add and configure entriesColumn
   entriesColumn <- #getObject builder "entriesColumn" >>= unsafeCastTo Gtk.TreeViewColumn . fromJust
-  entriesColumnRenderer <- Gtk.cellRendererTextNew
+  entriesColumnRenderer <- new Gtk.CellRendererText [ #editable := True ]
+  Gtk.afterCellRendererTextEdited entriesColumnRenderer (onListEntryEdited model)
+  
   Gtk.treeViewColumnPackStart entriesColumn entriesColumnRenderer True
   Gtk.cellLayoutSetCellDataFunc entriesColumn entriesColumnRenderer (Just dataFunc)
 
   -- Connect signals
-  model <- #getObject builder "listStore" >>= unsafeCastTo Gtk.ListStore . fromJust
+  entriesList <- #getObject builder "entriesList" >>= unsafeCastTo Gtk.TreeView . fromJust
+  notesView <- #getObject builder "notesView" >>= unsafeCastTo Gtk.TextView . fromJust
+
+  on notesView #keyReleaseEvent (notesLostFocus notesView entriesList)
+  -- other events does not work in all cases for whatever reason
+  -- on notesView #focusOutEvent (notesLostFocus notesView entriesList)
+  -- on notesView #leaveNotifyEvent (notesLostFocus notesView entriesList)
+  -- Gtk.onWidgetFocusOutEvent notesView (notesLostFocus notesView entriesList)
+
+  on entriesList #cursorChanged (listSelectionChanged notesView entriesList)
+
   addButton <- #getObject builder "addEntryButton" >>= unsafeCastTo Gtk.Button . fromJust
   on addButton #clicked (addEntry model)
+
+  removeButton <- #getObject builder "removeEntryButton" >>= unsafeCastTo Gtk.Button . fromJust
+  on removeButton #clicked (removeEntry entriesList)
+
+  fileMenuSave <- #getObject builder "fileMenuSave" >>= unsafeCastTo Gtk.ImageMenuItem . fromJust
+  -- on quitMenu #activate (save entriesList "data.json")
 
   win <- #getObject builder "mainWindow" >>= unsafeCastTo Gtk.Window . fromJust
   on win #destroy Gtk.mainQuit
@@ -58,7 +192,7 @@ main = do
 
   toolbarExit <- #getObject builder "toolbarExit" >>= unsafeCastTo Gtk.ToolButton . fromJust
   on toolbarExit #clicked (Gtk.windowClose win)
-  
+
   #showAll win
 
   -- WorkingStack entriesList <- loadWorkingStackFromFile "workingstack.json"
@@ -71,106 +205,3 @@ main = do
 --------------------------------------------------------------------------------
 --------------------------------------------------------------------------------
 
-{-
-initGui entries = do
-  -- main window and main layout
-  win <- createWindow
-  mainBox <- new Gtk.Box [ #orientation := Gtk.OrientationVertical ]
-  #add win mainBox
-
-  -- add menubar
-  menuBar <- createMenuBar win
-  #add mainBox menuBar
-
-  -- add toolbar
-  toolBar <- createToolBar win
-  #add mainBox toolBar
-
-  -- central widget
-  centralWidget <- createCentralWidget entries
-  #add mainBox centralWidget
-  
-  #showAll win
-
-
-createWindow = do
-  win <- new Gtk.Window [ #title := "WorkingStack" ]
-  on win #destroy Gtk.mainQuit
-
-  return win
-
---------------------------------------------------------------------------------
-
-createCentralWidget entries = do
-  paned <- new Gtk.Paned [ #wideHandle := True ]
-  
-  -- left side
-  leftBox <- new Gtk.Box [ #orientation := Gtk.OrientationVertical ]
-  Gtk.panedPack1 paned leftBox True False
-
-  -- left tree
-  ---- model
-  -- listStore <- new Gtk.ListStore []
-  listStore <- Gtk.listStoreNew [ (Entry "a" "b") ] -- entries
-  
-  elementList <- new Gtk.TreeView [ #model := listStore, #expand := True ]
-  ---- column
-  elementColumn <- new Gtk.TreeViewColumn [ #title := "Element" ]
-  elementRenderer <- cellRendererTextNew
-  Gtk.cellLayoutPackStart elementColumn elementRenderer True
-  Gtk.cellLayoutAddAttribute elementColumn elementRenderer listStore $ \row -> [ cellText := description row ]
-  
-
-  Gtk.treeViewAppendColumn elementList elementColumn
-  #add leftBox elementList
-
-  -- left add button
-  addButton <- new Gtk.Button [ #label := "gtk-add", #useStock := True ]
-  on addButton #clicked (addEntry listStore)
-  #add leftBox addButton
-
-  -- left remote button
-  removeButton <- new Gtk.Button [ #label := "gtk-remove", #useStock := True ]
-  #add leftBox removeButton
-
-  -- right TextView
-  textView <- new Gtk.TextView [ #expand := True ]
-  -- on textView #focusOutEvent 
-  Gtk.panedPack2 paned textView True False
-
-  return paned
-
---------------------------------------------------------------------------------
-
-createToolBar win = do
-  toolBar <- new Gtk.Toolbar []
-
-  return toolBar
-
---------------------------------------------------------------------------------
-
-createMenuBar win = do
-  menuBar <- new Gtk.MenuBar []
-
-  -- File - Menu
-  fileMenu <- new Gtk.Menu []
-
-  ---- File -> Save
-  fileMenuSave <- new Gtk.ImageMenuItem [ #label := "gtk-save", #useStock := True ]
-  Gtk.menuShellAppend fileMenu fileMenuSave
-
-  ---- Separator
-  sep <- new Gtk.SeparatorMenuItem []
-  Gtk.menuShellAppend fileMenu sep
-
-  ---- File -> Quit
-  fileMenuQuit <- new Gtk.ImageMenuItem [ #label := "gtk-quit", #useStock := True ]
-  on fileMenuQuit #activate (Gtk.windowClose win)
-  Gtk.menuShellAppend fileMenu fileMenuQuit
-
-  -- File - Menu
-  file <- new Gtk.MenuItem [ #label := "File", #submenu := fileMenu ]
-  #add menuBar file
-
-  return menuBar
--}

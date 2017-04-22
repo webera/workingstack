@@ -5,11 +5,12 @@
   <object class="GtkListStore" id="listStore">
     <columns>
       <!-- column-name entriesColumn -->
-      <column type="gchararray"/>
+      <column type="gpointer"/>
     </columns>
   </object>
   <object class="GtkWindow" id="mainWindow">
     <property name="can_focus">False</property>
+    <property name="window_position">center</property>
     <child>
       <object class="GtkBox" id="mainLayout">
         <property name="visible">True</property>
@@ -91,6 +92,29 @@
           <object class="GtkToolbar" id="toolbar">
             <property name="visible">True</property>
             <property name="can_focus">False</property>
+            <child>
+              <object class="GtkToolButton" id="toolbarSave">
+                <property name="visible">True</property>
+                <property name="can_focus">False</property>
+                <property name="label" translatable="yes">Save</property>
+                <property name="use_underline">True</property>
+                <property name="stock_id">gtk-save</property>
+              </object>
+              <packing>
+                <property name="expand">False</property>
+                <property name="homogeneous">True</property>
+              </packing>
+            </child>
+            <child>
+              <object class="GtkSeparatorToolItem">
+                <property name="visible">True</property>
+                <property name="can_focus">False</property>
+              </object>
+              <packing>
+                <property name="expand">False</property>
+                <property name="homogeneous">True</property>
+              </packing>
+            </child>
             <child>
               <object class="GtkToolButton" id="toolbarExit">
                 <property name="visible">True</property>
@@ -194,6 +218,9 @@
           </packing>
         </child>
       </object>
+    </child>
+    <child type="titlebar">
+      <placeholder/>
     </child>
   </object>
 </interface>
