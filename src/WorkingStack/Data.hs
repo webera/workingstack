@@ -2,6 +2,8 @@
 
 module WorkingStack.Data where
 
+import System.IO.Error
+
 import Data.Aeson
 import GHC.Generics
 import qualified Data.Text as Text
@@ -36,10 +38,13 @@ instance FromJSON WorkingStack
 --------------------------------------------------------------------------------
 
 loadWorkingStackFromFile file = do
-  bs <- ByteString.readFile file
-  case decode bs :: Maybe WorkingStack of
-    Just (WorkingStack xs) -> return xs
-    Nothing -> return ([])
+  result <- tryIOError (ByteString.readFile file)
+  case result of
+    Left ex -> return ([])
+    Right bs -> do
+      case decode bs :: Maybe WorkingStack of
+        Just (WorkingStack xs) -> return xs
+        Nothing -> return ([])
 
 --------------------------------------------------------------------------------
 

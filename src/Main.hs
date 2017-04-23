@@ -2,6 +2,8 @@
 
 module Main where
 
+import Data.IORef
+import qualified Data.Vector as Vector
 import Data.Maybe (fromJust)
 import System.Environment
 
@@ -117,28 +119,16 @@ listSelectionChanged notesView treeView = do
 
 --------------------------------------------------------------------------------
 
-{-
 save treeView file = do
-  model <- Gtk.treeViewGetModel treeView >>= fromJust
-
-  (valid, sIter) <- Gtk.treeModelIterFirst model
-  case valid of
-    True -> do
-      return ()
-    False -> do
-      saveWorkingStackToFile (WorkingStack []) "data.json"
-      return ()
-
-  where collect xs model = do
-          treeModelIterNext model
--}          
-
-{-
-  where foreachFunc tm _ it = do
-          ptr <- Gtk.treeModelGetValue model iter 0 >>= fromGValue
+  Just model <- Gtk.treeViewGetModel treeView
+  vecRef <- newIORef $ Vector.empty
+  Gtk.treeModelForeach model (foreachFunc vecRef)
+  readIORef vecRef >>= \vec -> saveWorkingStackToFile (WorkingStack (Vector.toList $ Vector.reverse vec)) file
+  where foreachFunc vRef tm _ iter = do
+          ptr <- Gtk.treeModelGetValue tm iter 0 >>= fromGValue
           entry <- deRefStablePtr $ castPtrToStablePtr ptr
+          modifyIORef vRef (Vector.cons entry)
           return (False)
--}
 
 --------------------------------------------------------------------------------
 
@@ -182,7 +172,9 @@ main = do
   on removeButton #clicked (removeEntry entriesList)
 
   fileMenuSave <- #getObject builder "fileMenuSave" >>= unsafeCastTo Gtk.ImageMenuItem . fromJust
-  -- on quitMenu #activate (save entriesList "data.json")
+  toolBarSave <- #getObject builder "toolbarSave" >>= unsafeCastTo Gtk.ToolButton . fromJust
+  on fileMenuSave #activate (save entriesList "data.json")
+  on toolBarSave #clicked (save entriesList "data.json")
 
   win <- #getObject builder "mainWindow" >>= unsafeCastTo Gtk.Window . fromJust
   on win #destroy Gtk.mainQuit
@@ -194,14 +186,8 @@ main = do
   on toolbarExit #clicked (Gtk.windowClose win)
 
   #showAll win
-
-  -- WorkingStack entriesList <- loadWorkingStackFromFile "workingstack.json"
-  -- fromList entriesList
-
-  -- initGui entriesList
   
   Gtk.main
 
 --------------------------------------------------------------------------------
 --------------------------------------------------------------------------------
-
